@@ -84,25 +84,29 @@ function readBits(buffer, offset, bitOffset, bitLen, signed) {
 	return val;
 }
 
-function imageInfoPng(buffer) {
+function imageInfoPng(buffer, callback) {
 	var imageHeader = [0x49, 0x48, 0x44, 0x52],
 		pos = 12;
 
 	if (!checkSig(buffer, pos, imageHeader)) {
 		return false;
+
+		callback('not valid png.', null);
 	}
 
 	pos += 4;
-	return {
+	var result = {
 		type: 'image',
 		format: 'PNG',
 		mimeType: 'image/png',
 		width: readUInt32(buffer, pos, true),
 		height: readUInt32(buffer, pos+4, true),
 	};
+
+	callback(null, result);
 }
 
-function imageInfoJpg(buffer) {
+function imageInfoJpg(buffer, callback) {
 	var pos = 2,
 		len = buffer.length,
 		sizeSig = [0xff, [0xc0, 0xc2]];
@@ -110,13 +114,15 @@ function imageInfoJpg(buffer) {
 	while (pos < len) {
 		if (checkSig(buffer, pos, sizeSig)) {
 			pos += 5;
-			return {
+			var result = {
 				type: 'image',
 				format: 'JPG',
 				mimeType: 'image/jpeg',
 				width: readUInt16(buffer, pos+2, true),
 				height: readUInt16(buffer, pos, true),
 			};
+
+			callback(null, result);
 		}
 
 		pos += 2;
@@ -125,27 +131,42 @@ function imageInfoJpg(buffer) {
 	}
 }
 
-function imageInfoGif(buffer) {
+function imageInfoGif(buffer, callback) {
 	var pos = 6;
 
-	return {
+	result = {
 		type: 'image',
 		format: 'GIF',
 		mimeType: 'image/gif',
 		width: readUInt16(buffer, pos, false),
 		height: readUInt16(buffer, pos+2, false),
 	};
+
+	callback(null, result);
 }
 
-function imageInfoSwf(buffer) {
+function imageInfoSwf(buffer, callback) {
 	var pos = 8,
 		bitPos = 0,
-		val;
+		val,
+		callback = callback;
+
+	console.log(callback);
 
 	if (buffer[0] === 0x43) {
 		try {
+			var zlib = require('zlib');
+
 			// If you have zlib available ( npm install zlib ) then we can read compressed flash files
-			buffer = require('zlib').inflate(buffer.slice(8, 100));
+			zlib.inflate(buffer.slice(8, 100), (function (err, res) {
+				if (err) {
+					throw err;					
+				} else {
+					var flashInfo = getFlashInfo(res, pos, bitPos);
+				}
+				
+				callback(err, flashInfo);
+			}).bind(this));
 			pos = 0;
 		}
 		catch (ex) {
@@ -159,7 +180,9 @@ function imageInfoSwf(buffer) {
 			}
 		}
 	}
+};
 
+function getFlashInfo (buffer, pos, bitPos) {
 	var numBits = readBits(buffer, pos, bitPos, 5)[0];
 	bitPos += 5;
 	
@@ -178,13 +201,15 @@ function imageInfoSwf(buffer) {
 	val = readBits(buffer, pos, bitPos, numBits, true);
 	var yMax = (numBits > 9 ? readUInt16(val, 0, true) : val[0]) * (val.negative ? -1 : 1);
 
-	return {
+	var x = {
 		type: 'flash',
 		format: 'SWF',
 		mimeType: 'application/x-shockwave-flash',
 		width: Math.ceil((xMax - xMin) / 20),
 		height: Math.ceil((yMax - yMin) / 20),
 	};
+
+	return x;
 }
 
 function checkSig(buffer, offset, sig) {
@@ -214,16 +239,16 @@ function checkSig(buffer, offset, sig) {
 	return true;
 }
 
-module.exports = function imageInfo(buffer, path) {
+module.exports = function imageInfo(buffer, callback) {
 	var pngSig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 	var jpgSig = [0xff, 0xd8, 0xff];
 	var gifSig = [0x47, 0x49, 0x46, 0x38, [0x37, 0x39], 0x61];
 	var swfSig = [[0x46, 0x43], 0x57, 0x53];
 
-	if (checkSig(buffer, 0, pngSig)) return imageInfoPng(buffer);
-	if (checkSig(buffer, 0, jpgSig)) return imageInfoJpg(buffer);
-	if (checkSig(buffer, 0, gifSig)) return imageInfoGif(buffer);
-	if (checkSig(buffer, 0, swfSig)) return imageInfoSwf(buffer);
+	if (checkSig(buffer, 0, pngSig)) imageInfoPng(buffer, callback);
+	if (checkSig(buffer, 0, jpgSig)) imageInfoJpg(buffer, callback);
+	if (checkSig(buffer, 0, gifSig)) imageInfoGif(buffer, callback);
+	if (checkSig(buffer, 0, swfSig)) imageInfoSwf(buffer, callback);
 
 	return false;
 };
